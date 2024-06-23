@@ -45,10 +45,33 @@ public class Audio {
 }
 '@
 
-$previousState = $null
+
+# Returns true if the battery status is charging or fully charged
+function DeviceIsCharging
+{
+  param (
+      [int]$Status
+  )
+  return ($Status -eq 2 -or $Status -eq 3)
+}
+
+# Gets a string for the current battery status
+function GetBatteryStatusString {
+  param (
+      [int]$Status
+  )
+
+  switch ($Status) {
+      0 { return "Discharging" }
+      1 { return "Idle" }
+      2 { return "Charging" }
+      3 { return "Fully charged" }
+      4 { return "Unknown status" }
+      Default { return "Uninitialized" }
+  }
+}
 
 Write-Host "This script will make an alarm if the charging cable is unplugged."
-
 
 # Setup audio player
 $scriptPath = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -57,35 +80,50 @@ Add-Type -AssemblyName presentationCore
 $mediaPlayer = New-Object system.windows.media.mediaplayer
 $mediaPlayer.open($mp3File)
 
-
+$previousState = -1
+$deviceWasCharging = $false
 
 while ($true)
 {
-    $powerStatus = Get-WmiObject -Class Win32_Battery
-    $currentState = $powerStatus.BatteryStatus
-    
-    if ($previousState -ne $currentState)
-    {
-        if ($currentState -eq 2)
-        {
-            Write-Host "Charging cable inserted. Battery is charging."
-        }
-        elseif ($currentState -eq 1)
-        {
-            # Battery is discharging (cable removed)
-            Write-Host "Charging cable removed. Battery is discharging."
+  $powerStatus = Get-WmiObject -Class Win32_Battery
+  $currentState = $powerStatus.BatteryStatus
+  
+  if ($previousState -eq $currentState)
+  {
+    continue
+  }
 
-            # Play alarm sound
-            [Audio]::Mute = $false
-            [Audio]::Volume = 0.20
-            $mediaPlayer.Play()
-        }
-        else
-        {
-            Write-Host "Power state changed from $previousState to $currentState"
-        }
-    }
+  # Write-Host "Power state changed from $previousState to $currentState"
+  $previousStateString = GetBatteryStatusString -Status $previousState
+  $currentStateString = GetBatteryStatusString -Status $currentState
+  Write-Host "Power state changed from $previousStateString to $currentStateString"
+  # Write-Host "Power state changed from $($GetBatteryStatusString.Invoke($previousState)) to $($GetBatteryStatusString.Invoke($currentState))"
+
+  $deviceIsCharging = DeviceIsCharging -Status $currentState
     
-    $previousState = $currentState
-    Start-Sleep -Seconds 10
+  if (-not $deviceWasCharging -and $deviceIsCharging)
+  {
+    $mediaPlayer.Stop()
+    Write-Host "Charging cable plugged in. Alarm is paused."
+  }
+  elseif ($deviceWasCharging -and -not $deviceIsCharging)
+  {
+      # Battery is discharging (cable removed)
+      Write-Host "Charging cable removed. Playing alarm."
+
+      # Play alarm sound
+      [Audio]::Mute = $false
+      [Audio]::Volume = 1.0
+      $mediaPlayer.Play()
+  }
+  else
+  {
+      Write-Host "Battery is not charging."
+  }
+  
+  $deviceWasCharging = $deviceIsCharging
+  $previousState = $currentState
+  Start-Sleep -Milliseconds 100
+
+  Write-Host "Waiting for changes..."
 }
